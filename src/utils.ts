@@ -1,4 +1,4 @@
-import {computed, extras, IComputedValue, IListenable, IObservable} from 'mobx';
+import {computed, getAtom, getObserverTree, _getAdministration, IComputedValue, IListenable, IObservable} from 'mobx';
 import {MobxPromise} from "./MobxPromise";
 
 /**
@@ -14,7 +14,7 @@ export function cached<T>(target: any, propertyKey: string | symbol, descriptor:
 	{
 		let get = descriptor.get;
 		descriptor.get = function(...args:any[]) {
-			const computed = extras.getAtom(this, propertyKey as string) as IObservable & IListenable;
+			const computed = getAtom(this, propertyKey as string) as IObservable & IListenable;
 			// to keep the cached value, add an observer if there are none
 			if (computed.observers && computed.observers.length === 0)
 				computed.observe(function() { /*noop*/ });
@@ -29,7 +29,7 @@ export function cached<T>(target: any, propertyKey: string | symbol, descriptor:
  */
 export function hasObservers<T>(thing:T, property:keyof T)
 {
-	let tree = extras.getObserverTree(thing, property as string);
+	let tree = getObserverTree(thing, property as string);
 	return tree && tree.observers ? tree.observers.length > 0 : false;
 }
 
@@ -44,7 +44,7 @@ export function labelMobxPromises<T extends object>(target:T)
 		let desc = Object.getOwnPropertyDescriptor(target, key);
 		if (desc && desc.value instanceof MobxPromise)
 		{
-			let admin = extras.getAdministration(desc.value);
+			let admin = _getAdministration(desc.value);
 			admin.name = `${key}(${admin.name})`;
 		}
 	}

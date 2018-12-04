@@ -49,7 +49,7 @@ describe('MobxPromise', () => {
 	});
 
 	it('triggers mobx as expected', async () => {
-		let value = mobx.observable(INITIAL);
+		let value = mobx.observable.box(INITIAL);
 		let params = {
 			invoke: spy(async () => value.get()),
 			default: DEFAULT,
@@ -65,14 +65,13 @@ describe('MobxPromise', () => {
 		await sleep();
 		assert.isTrue(params.invoke.notCalled, "checking peekStatus does not trigger invoke");
 
-		// we have to set up a reaction or @computed properties won't be cached.
-		// reactionDisposer = mobx.autorun(reaction);
+		// set up reaction
+        reactionDisposer = mobx.autorun(()=>[mp.status, mp.result]);
 		assert.equal(mp.peekStatus, "pending", "peekStatus is same as status");
 		assert.equal(mp.status, 'pending', 'status is pending immediately after creation');
 		assert.isTrue(params.invoke.calledOnce, 'invoke called once when status is checked');
 		assert.equal(mp.result, DEFAULT, 'result is set to default value');
 
-		reactionDisposer = mobx.autorun(()=>mp.result);
 		await whenComplete(mp);
 		assert.equal(mp.result, INITIAL, 'observed initial result');
 		assert.equal(mp.status, 'complete', 'status is complete when result updates');
@@ -95,7 +94,7 @@ describe('MobxPromise', () => {
 	});
 
 	it('will not keep calling invoke when not observed', async () => {
-		let value = mobx.observable(INITIAL);
+		let value = mobx.observable.box(INITIAL);
 		let params = {
 			invoke: spy(async () => value.get()),
 			default: DEFAULT,
@@ -106,9 +105,9 @@ describe('MobxPromise', () => {
 		assert.equal(mp.peekStatus, "pending", "pending status initially");
 		await sleep();
 		assert.isTrue(params.invoke.notCalled, "checking peekStatus does not trigger invoke");
+		
+        reactionDisposer = mobx.autorun(()=>mp.result);
 		assert.equal(mp.result, DEFAULT, 'result matches default value when first requested');
-
-		reactionDisposer = mobx.autorun(()=>mp.result);
 		return new Promise((resolve, reject) => {
 			setTimeout(() => {
 				try
@@ -125,5 +124,55 @@ describe('MobxPromise', () => {
 				}
 			}, 200);
 		});
+	});
+
+	it('throws an error if we try to access certain properties outside a reaction', ()=>{
+		let errorsEncountered = 0;
+        let mp = new MobxPromise({invoke:()=>Promise.resolve(0)});
+
+        try {
+        	mp.status;
+		} catch (e) {
+        	errorsEncountered += 1;
+		}
+
+        try {
+            mp.result;
+        } catch (e) {
+            errorsEncountered += 1;
+        }
+
+        try {
+            mp.error;
+        } catch (e) {
+            errorsEncountered += 1;
+        }
+
+        try {
+            mp.isComplete;
+        } catch (e) {
+            errorsEncountered += 1;
+        }
+
+        try {
+            mp.isPending;
+        } catch (e) {
+            errorsEncountered += 1;
+        }
+
+        try {
+            mp.isError;
+        } catch (e) {
+            errorsEncountered += 1;
+        }
+
+        try {
+        	// this shouldnt throw an error
+			mp.peekStatus;
+		} catch (e) {
+            errorsEncountered += 1;
+		}
+
+		assert.equal(errorsEncountered, 6);
 	});
 });

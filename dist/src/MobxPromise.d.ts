@@ -1,7 +1,7 @@
 /**
  * This tagged union type describes the interoperability of MobxPromise properties.
  */
-declare type MobxPromiseStatus = 'pending' | 'error' | 'complete';
+export declare type MobxPromiseStatus = 'pending' | 'error' | 'complete';
 export declare type MobxPromiseUnionType<R> = ({
     status: 'pending';
     isPending: true;

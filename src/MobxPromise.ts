@@ -1,9 +1,9 @@
-import {observable, action, computed} from "mobx";
+import {observable, action, computed, IComputedValue, IComputedValueOptions} from "mobx";
 
 /**
  * This tagged union type describes the interoperability of MobxPromise properties.
  */
-type MobxPromiseStatus = 'pending' | 'error' | 'complete';
+export type MobxPromiseStatus = 'pending' | 'error' | 'complete';
 export type MobxPromiseUnionType<R> = (
 	{ status: 'pending',  isPending: true,  isError: false, isComplete: false, result: R|undefined, error: Error|undefined } |
 	{ status: 'error',    isPending: false, isError: true,  isComplete: false, result: R|undefined, error: Error           } |
@@ -104,18 +104,20 @@ export class MobxPromiseImpl<R>
 	@observable.ref private internalResult?:R = undefined;
 	@observable.ref private internalError?:Error = undefined;
 
-	@computed get status():'pending'|'complete'|'error'
+    // Require `status` to be referenced in a reaction, because otherwise we could get bugs and infinite loops happening
+    //	because our @computed's are invoking computations and then not caching them.
+	@computed({requiresReaction:true}) get status():'pending'|'complete'|'error'
 	{
-		// wait until all MobxPromise dependencies are complete
-		if (this.await)
-			for (let status of this.await().map(mp => mp.status)) // track all statuses before returning
-				if (status !== 'complete')
-					return status;
+        // wait until all MobxPromise dependencies are complete
+        if (this.await)
+            for (let status of this.await().map(mp => mp.status)) // track all statuses before returning
+                if (status !== 'complete')
+                    return status;
 
-		let status = this.internalStatus; // force mobx to track changes to internalStatus
-		if (this.latestInvokeId != this.invokeId)
-			status = 'pending';
-		return status;
+        let status = this.internalStatus; // force mobx to track changes to internalStatus
+        if (this.latestInvokeId != this.invokeId)
+            status = 'pending';
+        return status;
 	}
 
 	@computed get peekStatus():'pending'|'complete'|'error'
@@ -132,28 +134,31 @@ export class MobxPromiseImpl<R>
 		return this.internalStatus;
 	}
 
-	@computed get isPending() { return this.status == 'pending'; }
-	@computed get isComplete() { return this.status == 'complete'; }
-	@computed get isError() { return this.status == 'error'; }
+	public get isPending() { return this.status == 'pending'; }
+	public get isComplete() { return this.status == 'complete'; }
+	public get isError() { return this.status == 'error'; }
 
-	@computed get result():R|undefined
-	{
-		// checking status may trigger invoke
-		if (this.isError || this.internalResult == null)
-			return this.defaultResult;
+    // Require `result` to be referenced in a reaction, because otherwise we could get bugs and infinite loops happening
+    //	because our @computed's are invoking computations and then not caching them.
+    @computed({requiresReaction:true}) get result():R|undefined {
+        // checking status may trigger invoke
+        if (this.isError || this.internalResult == null)
+            return this.defaultResult;
 
-		return this.internalResult;
+        return this.internalResult;
 	}
 
-	@computed get error():Error|undefined
+    // Require `error` to be referenced in a reaction, because otherwise we could get bugs and infinite loops happening
+    //	because our @computed's are invoking computations and then not caching them.
+    @computed({requiresReaction:true}) get error():Error|undefined
 	{
-		// checking status may trigger invoke
-		if (!this.isComplete && this.await)
-			for (let error of this.await().map(mp => mp.error)) // track all errors before returning
-				if (error)
-					return error;
+        // checking status may trigger invoke
+        if (!this.isComplete && this.await)
+            for (let error of this.await().map(mp => mp.error)) // track all errors before returning
+                if (error)
+                    return error;
 
-		return this.internalError;
+        return this.internalError;
 	}
 
 	/**

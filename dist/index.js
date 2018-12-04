@@ -153,6 +153,9 @@ var MobxPromiseImpl = function () {
         }
     }, {
         key: "status",
+
+        // Require `status` to be referenced in a reaction, because otherwise we could get bugs and infinite loops happening
+        //	because our @computed's are invoking computations and then not caching them.
         get: function get() {
             // wait until all MobxPromise dependencies are complete
             if (this.await) {
@@ -236,6 +239,9 @@ var MobxPromiseImpl = function () {
         get: function get() {
             return this.status == 'error';
         }
+        // Require `result` to be referenced in a reaction, because otherwise we could get bugs and infinite loops happening
+        //	because our @computed's are invoking computations and then not caching them.
+
     }, {
         key: "result",
         get: function get() {
@@ -243,6 +249,9 @@ var MobxPromiseImpl = function () {
             if (this.isError || this.internalResult == null) return this.defaultResult;
             return this.internalResult;
         }
+        // Require `error` to be referenced in a reaction, because otherwise we could get bugs and infinite loops happening
+        //	because our @computed's are invoking computations and then not caching them.
+
     }, {
         key: "error",
         get: function get() {
@@ -317,13 +326,10 @@ var MobxPromiseImpl = function () {
 __decorate([mobx_1.observable], MobxPromiseImpl.prototype, "internalStatus", void 0);
 __decorate([mobx_1.observable.ref], MobxPromiseImpl.prototype, "internalResult", void 0);
 __decorate([mobx_1.observable.ref], MobxPromiseImpl.prototype, "internalError", void 0);
-__decorate([mobx_1.computed], MobxPromiseImpl.prototype, "status", null);
+__decorate([mobx_1.computed({ requiresReaction: true })], MobxPromiseImpl.prototype, "status", null);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "peekStatus", null);
-__decorate([mobx_1.computed], MobxPromiseImpl.prototype, "isPending", null);
-__decorate([mobx_1.computed], MobxPromiseImpl.prototype, "isComplete", null);
-__decorate([mobx_1.computed], MobxPromiseImpl.prototype, "isError", null);
-__decorate([mobx_1.computed], MobxPromiseImpl.prototype, "result", null);
-__decorate([mobx_1.computed], MobxPromiseImpl.prototype, "error", null);
+__decorate([mobx_1.computed({ requiresReaction: true })], MobxPromiseImpl.prototype, "result", null);
+__decorate([mobx_1.computed({ requiresReaction: true })], MobxPromiseImpl.prototype, "error", null);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "latestInvokeId", null);
 __decorate([mobx_1.action], MobxPromiseImpl.prototype, "setPending", null);
 __decorate([mobx_1.action], MobxPromiseImpl.prototype, "setComplete", null);
@@ -377,7 +383,7 @@ function cached(target, propertyKey, descriptor) {
     if (descriptor.get) {
         var get = descriptor.get;
         descriptor.get = function () {
-            var computed = mobx_1.extras.getAtom(this, propertyKey);
+            var computed = mobx_1.getAtom(this, propertyKey);
             // to keep the cached value, add an observer if there are none
             if (computed.observers && computed.observers.length === 0) computed.observe(function () {});
 
@@ -395,7 +401,7 @@ exports.cached = cached;
  * Checks if a property has observers.
  */
 function hasObservers(thing, property) {
-    var tree = mobx_1.extras.getObserverTree(thing, property);
+    var tree = mobx_1.getObserverTree(thing, property);
     return tree && tree.observers ? tree.observers.length > 0 : false;
 }
 exports.hasObservers = hasObservers;
@@ -407,7 +413,7 @@ function labelMobxPromises(target) {
     for (var key in target) {
         var desc = Object.getOwnPropertyDescriptor(target, key);
         if (desc && desc.value instanceof MobxPromise_1.MobxPromise) {
-            var admin = mobx_1.extras.getAdministration(desc.value);
+            var admin = mobx_1._getAdministration(desc.value);
             admin.name = key + "(" + admin.name + ")";
         }
     }
