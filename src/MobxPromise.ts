@@ -1,4 +1,5 @@
-import {observable, action, computed} from "mobx";
+import {action, computed} from "mobx";
+import {makePseudoObservable} from "./utils";
 
 /**
  * This tagged union type describes the interoperability of MobxPromise properties.
@@ -45,7 +46,7 @@ export type MobxPromiseInputParams<R> = {
 	onError?: (error:Error) => void,
 };
 export type MobxPromise_await = () => Array<MobxPromiseUnionTypeWithDefault<any> | MobxPromiseUnionType<any> | MobxPromise<any>>;
-export type MobxPromise_invoke<R> = () => PromiseLike<R>;
+export type MobxPromise_invoke<R> = (syncResolve:(result:R)=>void) => PromiseLike<R>;
 export type MobxPromiseInputParamsWithDefault<R> = {
 	await?: MobxPromise_await,
 	invoke: MobxPromise_invoke<R>,
@@ -97,12 +98,11 @@ export class MobxPromiseImpl<R>
 	private onResult?:(result?:R) => void;
 	private onError?:(error:Error) => void;
 	private defaultResult?:R;
-	private invokeId:number = 0;
-	private _latestInvokeId:number = 0;
+	private _asyncInvokeCount:number = 0;
 
-	@observable private internalStatus:'pending'|'complete'|'error' = 'pending';
-	@observable.ref private internalResult?:R = undefined;
-	@observable.ref private internalError?:Error = undefined;
+	private internalStatus = makePseudoObservable('pending' as 'pending'|'complete'|'error');
+	private internalResult = makePseudoObservable(undefined as R|undefined);
+	private internalError = makePseudoObservable(undefined as Error|undefined);
 
 	@computed get status():'pending'|'complete'|'error'
 	{
@@ -112,10 +112,9 @@ export class MobxPromiseImpl<R>
 				if (status !== 'complete')
 					return status;
 
-		let status = this.internalStatus; // force mobx to track changes to internalStatus
-		if (this.latestInvokeId != this.invokeId)
-			status = 'pending';
-		return status;
+
+		this.invokeResult; // reference to start computation when status is referenced
+		return this.internalStatus.value;
 	}
 
 	@computed get peekStatus():'pending'|'complete'|'error'
@@ -129,7 +128,7 @@ export class MobxPromiseImpl<R>
 					return status;
 
 		// otherwise, return internal status
-		return this.internalStatus;
+		return this.internalStatus.value;
 	}
 
 	@computed get isPending() { return this.status == 'pending'; }
@@ -139,10 +138,10 @@ export class MobxPromiseImpl<R>
 	@computed get result():R|undefined
 	{
 		// checking status may trigger invoke
-		if (this.isError || this.internalResult == null)
+		if (this.isError || !this.internalResult.isSet)
 			return this.defaultResult;
 
-		return this.internalResult;
+		return this.internalResult.value;
 	}
 
 	@computed get error():Error|undefined
@@ -153,38 +152,52 @@ export class MobxPromiseImpl<R>
 				if (error)
 					return error;
 
-		return this.internalError;
+		return this.internalError.value;
 	}
 
 	/**
 	 * This lets mobx determine when to call this.invoke(),
 	 * taking advantage of caching based on observable property access tracking.
 	 */
-	@computed private get latestInvokeId()
+	@computed private get invokeResult()
 	{
-		window.clearTimeout(this._latestInvokeId);
-		let promise = this.invoke();
-		let invokeId:number = window.setTimeout(() => this.setPending(invokeId, promise));
-		return this._latestInvokeId = invokeId;
+		let syncResult = {
+			isSet: false,
+			value: (undefined as R|undefined)
+		};
+
+		let promise = this.invoke((result:R)=>{
+			syncResult.isSet = true;
+			syncResult.value = result;
+		});
+
+		// override promise value, and set synchronously, if theres a synchronous resolution
+		if (syncResult.isSet) {
+			this.setComplete(this._asyncInvokeCount, syncResult.value!);
+			return 0;
+		} else {
+			this._asyncInvokeCount += 1;
+			this.setPending(this._asyncInvokeCount, promise);
+			return 0;
+		}
 	}
 
 	@action private setPending(invokeId:number, promise:PromiseLike<R>)
 	{
-		this.invokeId = invokeId;
 		promise.then(
 			result => this.setComplete(invokeId, result),
 			error => this.setError(invokeId, error)
 		);
-		this.internalStatus = 'pending';
+		this.internalStatus.value = 'pending';
 	}
 
 	@action private setComplete(invokeId:number, result:R)
 	{
-		if (invokeId === this.invokeId)
+		if (invokeId === this._asyncInvokeCount)
 		{
-			this.internalResult = result;
-			this.internalError = undefined;
-			this.internalStatus = 'complete';
+			this.internalResult.value = result;
+			this.internalError.value = undefined;
+			this.internalStatus.value = 'complete';
 
 			if (this.onResult)
 				this.onResult(this.result); // may use defaultResult
@@ -193,11 +206,11 @@ export class MobxPromiseImpl<R>
 
 	@action private setError(invokeId:number, error:Error)
 	{
-		if (invokeId === this.invokeId)
+		if (invokeId === this._asyncInvokeCount)
 		{
-			this.internalError = error;
-			this.internalResult = undefined;
-			this.internalStatus = 'error';
+			this.internalError.value = error;
+			this.internalResult.value = undefined;
+			this.internalStatus.value = 'error';
 
 			if (this.onError)
 				this.onError(error);

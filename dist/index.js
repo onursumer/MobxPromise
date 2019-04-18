@@ -70,7 +70,7 @@ return /******/ (function(modules) { // webpackBootstrap
 /******/ 	__webpack_require__.p = "";
 /******/
 /******/ 	// Load entry module and return exports
-/******/ 	return __webpack_require__(__webpack_require__.s = 2);
+/******/ 	return __webpack_require__(__webpack_require__.s = 3);
 /******/ })
 /************************************************************************/
 /******/ ([
@@ -96,6 +96,7 @@ var __decorate = this && this.__decorate || function (decorators, target, key, d
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 var mobx_1 = __webpack_require__(1);
+var utils_1 = __webpack_require__(2);
 /**
  * MobxPromise provides an observable interface for a computed promise.
  * @author adufilie http://github.com/adufilie
@@ -105,11 +106,10 @@ var MobxPromiseImpl = function () {
     function MobxPromiseImpl(input, defaultResult) {
         _classCallCheck(this, MobxPromiseImpl);
 
-        this.invokeId = 0;
-        this._latestInvokeId = 0;
-        this.internalStatus = 'pending';
-        this.internalResult = undefined;
-        this.internalError = undefined;
+        this._asyncInvokeCount = 0;
+        this.internalStatus = utils_1.makePseudoObservable('pending');
+        this.internalResult = utils_1.makePseudoObservable(undefined);
+        this.internalError = utils_1.makePseudoObservable(undefined);
         var norm = MobxPromiseImpl.normalizeInput(input, defaultResult);
         this.await = norm.await;
         this.invoke = norm.invoke;
@@ -123,31 +123,30 @@ var MobxPromiseImpl = function () {
         value: function setPending(invokeId, promise) {
             var _this = this;
 
-            this.invokeId = invokeId;
             promise.then(function (result) {
                 return _this.setComplete(invokeId, result);
             }, function (error) {
                 return _this.setError(invokeId, error);
             });
-            this.internalStatus = 'pending';
+            this.internalStatus.value = 'pending';
         }
     }, {
         key: "setComplete",
         value: function setComplete(invokeId, result) {
-            if (invokeId === this.invokeId) {
-                this.internalResult = result;
-                this.internalError = undefined;
-                this.internalStatus = 'complete';
+            if (invokeId === this._asyncInvokeCount) {
+                this.internalResult.value = result;
+                this.internalError.value = undefined;
+                this.internalStatus.value = 'complete';
                 if (this.onResult) this.onResult(this.result); // may use defaultResult
             }
         }
     }, {
         key: "setError",
         value: function setError(invokeId, error) {
-            if (invokeId === this.invokeId) {
-                this.internalError = error;
-                this.internalResult = undefined;
-                this.internalStatus = 'error';
+            if (invokeId === this._asyncInvokeCount) {
+                this.internalError.value = error;
+                this.internalResult.value = undefined;
+                this.internalStatus.value = 'error';
                 if (this.onError) this.onError(error);
             }
         }
@@ -164,9 +163,9 @@ var MobxPromiseImpl = function () {
                     for (var _iterator = this.await().map(function (mp) {
                         return mp.status;
                     })[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
-                        var _status = _step.value;
+                        var status = _step.value;
                         // track all statuses before returning
-                        if (_status !== 'complete') return _status;
+                        if (status !== 'complete') return status;
                     }
                 } catch (err) {
                     _didIteratorError = true;
@@ -182,9 +181,8 @@ var MobxPromiseImpl = function () {
                         }
                     }
                 }
-            }var status = this.internalStatus; // force mobx to track changes to internalStatus
-            if (this.latestInvokeId != this.invokeId) status = 'pending';
-            return status;
+            }this.invokeResult; // reference to start computation when status is referenced
+            return this.internalStatus.value;
         }
     }, {
         key: "peekStatus",
@@ -219,7 +217,7 @@ var MobxPromiseImpl = function () {
                     }
                 }
             } // otherwise, return internal status
-            return this.internalStatus;
+            return this.internalStatus.value;
         }
     }, {
         key: "isPending",
@@ -240,8 +238,8 @@ var MobxPromiseImpl = function () {
         key: "result",
         get: function get() {
             // checking status may trigger invoke
-            if (this.isError || this.internalResult == null) return this.defaultResult;
-            return this.internalResult;
+            if (this.isError || !this.internalResult.isSet) return this.defaultResult;
+            return this.internalResult.value;
         }
     }, {
         key: "error",
@@ -274,7 +272,7 @@ var MobxPromiseImpl = function () {
                         }
                     }
                 }
-            }return this.internalError;
+            }return this.internalError.value;
         }
         /**
          * This lets mobx determine when to call this.invoke(),
@@ -282,16 +280,25 @@ var MobxPromiseImpl = function () {
          */
 
     }, {
-        key: "latestInvokeId",
+        key: "invokeResult",
         get: function get() {
-            var _this2 = this;
-
-            window.clearTimeout(this._latestInvokeId);
-            var promise = this.invoke();
-            var invokeId = window.setTimeout(function () {
-                return _this2.setPending(invokeId, promise);
+            var syncResult = {
+                isSet: false,
+                value: undefined
+            };
+            var promise = this.invoke(function (result) {
+                syncResult.isSet = true;
+                syncResult.value = result;
             });
-            return this._latestInvokeId = invokeId;
+            // override promise value, and set synchronously, if theres a synchronous resolution
+            if (syncResult.isSet) {
+                this.setComplete(this._asyncInvokeCount, syncResult.value);
+                return 0;
+            } else {
+                this._asyncInvokeCount += 1;
+                this.setPending(this._asyncInvokeCount, promise);
+                return 0;
+            }
         }
     }], [{
         key: "isPromiseLike",
@@ -314,9 +321,6 @@ var MobxPromiseImpl = function () {
     return MobxPromiseImpl;
 }();
 
-__decorate([mobx_1.observable], MobxPromiseImpl.prototype, "internalStatus", void 0);
-__decorate([mobx_1.observable.ref], MobxPromiseImpl.prototype, "internalResult", void 0);
-__decorate([mobx_1.observable.ref], MobxPromiseImpl.prototype, "internalError", void 0);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "status", null);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "peekStatus", null);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "isPending", null);
@@ -324,7 +328,7 @@ __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "isComplete", null);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "isError", null);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "result", null);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "error", null);
-__decorate([mobx_1.computed], MobxPromiseImpl.prototype, "latestInvokeId", null);
+__decorate([mobx_1.computed], MobxPromiseImpl.prototype, "invokeResult", null);
 __decorate([mobx_1.action], MobxPromiseImpl.prototype, "setPending", null);
 __decorate([mobx_1.action], MobxPromiseImpl.prototype, "setComplete", null);
 __decorate([mobx_1.action], MobxPromiseImpl.prototype, "setError", null);
@@ -340,24 +344,6 @@ module.exports = __WEBPACK_EXTERNAL_MODULE_1__;
 
 /***/ }),
 /* 2 */
-/***/ (function(module, exports, __webpack_require__) {
-
-"use strict";
-
-
-function __export(m) {
-    for (var p in m) {
-        if (!exports.hasOwnProperty(p)) exports[p] = m[p];
-    }
-}
-Object.defineProperty(exports, "__esModule", { value: true });
-__export(__webpack_require__(0));
-__export(__webpack_require__(3));
-var MobxPromise_1 = __webpack_require__(0);
-exports.default = MobxPromise_1.default;
-
-/***/ }),
-/* 3 */
 /***/ (function(module, exports, __webpack_require__) {
 
 "use strict";
@@ -441,6 +427,45 @@ function debounceAsync(invoke) {
     };
 }
 exports.debounceAsync = debounceAsync;
+function makePseudoObservable(initialValue) {
+    var _atom = new mobx_1.Atom();
+    var _isSet = false;
+    var _value = initialValue;
+    return {
+        get isSet() {
+            _atom.reportObserved();
+            return _isSet;
+        },
+        get value() {
+            _atom.reportObserved();
+            return _value;
+        },
+        set value(v) {
+            _value = v;
+            _isSet = true;
+            _atom.reportChanged();
+        }
+    };
+}
+exports.makePseudoObservable = makePseudoObservable;
+
+/***/ }),
+/* 3 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+function __export(m) {
+    for (var p in m) {
+        if (!exports.hasOwnProperty(p)) exports[p] = m[p];
+    }
+}
+Object.defineProperty(exports, "__esModule", { value: true });
+__export(__webpack_require__(0));
+__export(__webpack_require__(2));
+var MobxPromise_1 = __webpack_require__(0);
+exports.default = MobxPromise_1.default;
 
 /***/ })
 /******/ ]);

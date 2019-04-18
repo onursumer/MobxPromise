@@ -21,3 +21,7 @@ export declare function labelMobxPromises<T extends object>(target: T): void;
  * original function will be resolved after a specified delay.
  */
 export declare function debounceAsync<R, F extends (...args: any[]) => PromiseLike<R>>(invoke: F, delay?: number): F;
+export declare function makePseudoObservable<T>(initialValue: T): {
+    readonly isSet: boolean;
+    value: T;
+};

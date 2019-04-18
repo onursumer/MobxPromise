@@ -1,4 +1,4 @@
-import {computed, extras, IComputedValue, IListenable, IObservable} from 'mobx';
+import {Atom, computed, extras, IComputedValue, IListenable, IObservable} from 'mobx';
 import {MobxPromise} from "./MobxPromise";
 
 /**
@@ -82,4 +82,27 @@ export function debounceAsync<R, F extends (...args:any[]) => PromiseLike<R>>(in
 			}
 		);
 	} as F;
+}
+
+
+export function makePseudoObservable<T>(initialValue:T) {
+    const _atom = new Atom();
+    let _isSet = false;
+    let _value = initialValue;
+
+    return {
+        get isSet() {
+            _atom.reportObserved();
+            return _isSet;
+        },
+        get value() {
+            _atom.reportObserved();
+            return _value;
+        },
+        set value(v:T) {
+            _value = v;
+            _isSet = true;
+            _atom.reportChanged();
+        }
+    }
 }
