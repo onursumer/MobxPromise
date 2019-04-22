@@ -103,13 +103,54 @@ var mobx_1 = __webpack_require__(1);
 
 var MobxPromiseImpl = function () {
     function MobxPromiseImpl(input, defaultResult) {
+        var _this = this;
+
         _classCallCheck(this, MobxPromiseImpl);
 
         this.invokeId = 0;
         this._latestInvokeId = 0;
         this.internalStatus = 'pending';
-        this.internalResult = undefined;
+        this.internalResult = undefined; // doesnt need to be observable because, since its synchronous,
+        //   users of `result` will synchronously register to `status` and `invoke`
+        //   and thus to anything that could change the synchronous `invoke` result
+        this.synchronousResult = false;
         this.internalError = undefined;
+        this._statusThatAlwaysTriggers = mobx_1.computed(function () {
+            // wait until all MobxPromise dependencies are complete
+            if (_this.await) {
+                var _iteratorNormalCompletion = true;
+                var _didIteratorError = false;
+                var _iteratorError = undefined;
+
+                try {
+                    for (var _iterator = _this.await().map(function (mp) {
+                        return mp.status;
+                    })[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+                        var _status = _step.value;
+                        // track all statuses before returning
+                        if (_status !== 'complete') return _status;
+                    }
+                } catch (err) {
+                    _didIteratorError = true;
+                    _iteratorError = err;
+                } finally {
+                    try {
+                        if (!_iteratorNormalCompletion && _iterator.return) {
+                            _iterator.return();
+                        }
+                    } finally {
+                        if (_didIteratorError) {
+                            throw _iteratorError;
+                        }
+                    }
+                }
+            }var status = _this.internalStatus; // force mobx to track changes to internalStatus
+            if (_this.latestInvokeId != _this.invokeId) status = 'pending';
+            if (_this.synchronousResult) status = 'complete';
+            return status;
+        }, { equals: function equals(a, b) {
+                return false;
+            } }); // in order to have internalSyncResult not be observable, but still
         var norm = MobxPromiseImpl.normalizeInput(input, defaultResult);
         this.await = norm.await;
         this.invoke = norm.invoke;
@@ -121,13 +162,13 @@ var MobxPromiseImpl = function () {
     _createClass(MobxPromiseImpl, [{
         key: "setPending",
         value: function setPending(invokeId, promise) {
-            var _this = this;
+            var _this2 = this;
 
             this.invokeId = invokeId;
             promise.then(function (result) {
-                return _this.setComplete(invokeId, result);
+                return _this2.setComplete(invokeId, result);
             }, function (error) {
-                return _this.setError(invokeId, error);
+                return _this2.setError(invokeId, error);
             });
             this.internalStatus = 'pending';
         }
@@ -153,38 +194,14 @@ var MobxPromiseImpl = function () {
         }
     }, {
         key: "status",
-        get: function get() {
-            // wait until all MobxPromise dependencies are complete
-            if (this.await) {
-                var _iteratorNormalCompletion = true;
-                var _didIteratorError = false;
-                var _iteratorError = undefined;
 
-                try {
-                    for (var _iterator = this.await().map(function (mp) {
-                        return mp.status;
-                    })[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
-                        var _status = _step.value;
-                        // track all statuses before returning
-                        if (_status !== 'complete') return _status;
-                    }
-                } catch (err) {
-                    _didIteratorError = true;
-                    _iteratorError = err;
-                } finally {
-                    try {
-                        if (!_iteratorNormalCompletion && _iterator.return) {
-                            _iterator.return();
-                        }
-                    } finally {
-                        if (_didIteratorError) {
-                            throw _iteratorError;
-                        }
-                    }
-                }
-            }var status = this.internalStatus; // force mobx to track changes to internalStatus
-            if (this.latestInvokeId != this.invokeId) status = 'pending';
-            return status;
+        //  keep everything properly triggering recomputation, we need
+        //  a way for our internal code to always react to any recomputation of
+        //  `status`, regardless of whether the result is the same. This accomplishes that.
+        get: function get() {
+            // we make this @computed so that outside users of `status` still get the expected @computed behavior
+            //	of only triggering recomputation when the value changes
+            return this._statusThatAlwaysTriggers.get();
         }
     }, {
         key: "peekStatus",
@@ -200,9 +217,9 @@ var MobxPromiseImpl = function () {
                     for (var _iterator2 = this.await().map(function (mp) {
                         return mp.peekStatus;
                     })[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
-                        var status = _step2.value;
+                        var _status2 = _step2.value;
 
-                        if (status !== 'complete') return status;
+                        if (_status2 !== 'complete') return _status2;
                     }
                 } catch (err) {
                     _didIteratorError2 = true;
@@ -219,7 +236,9 @@ var MobxPromiseImpl = function () {
                     }
                 }
             } // otherwise, return internal status
-            return this.internalStatus;
+            var status = this.internalStatus; // force mobx to track changes to internalStatus
+            if (this.synchronousResult) status = 'complete';
+            return status;
         }
     }, {
         key: "isPending",
@@ -239,15 +258,15 @@ var MobxPromiseImpl = function () {
     }, {
         key: "result",
         get: function get() {
-            // checking status may trigger invoke
-            if (this.isError || this.internalResult == null) return this.defaultResult;
+            // checking `_statusThatAlwaysTriggers` may trigger `invoke`, thus registering `result` to its observables
+            if (this._statusThatAlwaysTriggers.get() === "error" || this.internalResult == null) return this.defaultResult;
             return this.internalResult;
         }
     }, {
         key: "error",
         get: function get() {
-            // checking status may trigger invoke
-            if (!this.isComplete && this.await) {
+            // checking `_statusThatAlwaysTriggers` may trigger `invoke`, thus registering `error` to its observables
+            if (this._statusThatAlwaysTriggers.get() !== "complete" && this.await) {
                 var _iteratorNormalCompletion3 = true;
                 var _didIteratorError3 = false;
                 var _iteratorError3 = undefined;
@@ -274,7 +293,8 @@ var MobxPromiseImpl = function () {
                         }
                     }
                 }
-            }return this.internalError;
+            }if (this.synchronousResult) return undefined; // cant have an error if synchronously complete
+            return this.internalError;
         }
         /**
          * This lets mobx determine when to call this.invoke(),
@@ -284,14 +304,32 @@ var MobxPromiseImpl = function () {
     }, {
         key: "latestInvokeId",
         get: function get() {
-            var _this2 = this;
+            var _this3 = this;
 
             window.clearTimeout(this._latestInvokeId);
-            var promise = this.invoke();
-            var invokeId = window.setTimeout(function () {
-                return _this2.setPending(invokeId, promise);
+            this.synchronousResult = false;
+            var promise = this.invoke(function (result) {
+                _this3.synchronousResult = true;
+                _this3.internalResult = result;
+                return Promise.resolve(result);
             });
-            return this._latestInvokeId = invokeId;
+            if (this.synchronousResult) {
+                // synchronous result means we don't have to update anything
+                this.invokeId += 1; // have to change the value in order to trigger recomputation of users of `latestInvokeId`
+                if (this.onResult) {
+                    var internalResult = this.internalResult;
+                    setTimeout(function () {
+                        _this3.onResult(internalResult);
+                    });
+                }
+                return this.invokeId;
+            } else {
+                // no synchronous result means we need to update everything and react to promise
+                var invokeId = window.setTimeout(function () {
+                    return _this3.setPending(invokeId, promise);
+                });
+                return this._latestInvokeId = invokeId;
+            }
         }
     }], [{
         key: "isPromiseLike",
@@ -315,7 +353,6 @@ var MobxPromiseImpl = function () {
 }();
 
 __decorate([mobx_1.observable], MobxPromiseImpl.prototype, "internalStatus", void 0);
-__decorate([mobx_1.observable.ref], MobxPromiseImpl.prototype, "internalResult", void 0);
 __decorate([mobx_1.observable.ref], MobxPromiseImpl.prototype, "internalError", void 0);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "status", null);
 __decorate([mobx_1.computed], MobxPromiseImpl.prototype, "peekStatus", null);

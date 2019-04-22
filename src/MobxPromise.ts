@@ -1,4 +1,4 @@
-import {observable, action, computed} from "mobx";
+import {observable, action, computed, whyRun} from "mobx";
 
 /**
  * This tagged union type describes the interoperability of MobxPromise properties.
@@ -45,7 +45,7 @@ export type MobxPromiseInputParams<R> = {
     onError?: (error: Error) => void,
 };
 export type MobxPromise_await = () => Array<MobxPromiseUnionTypeWithDefault<any> | MobxPromiseUnionType<any> | MobxPromise<any>>;
-export type MobxPromise_invoke<R> = () => PromiseLike<R>;
+export type MobxPromise_invoke<R> = (syncResolve: (result: R) => PromiseLike<R>) => PromiseLike<R>;
 export type MobxPromiseInputParamsWithDefault<R> = {
     await?: MobxPromise_await,
     invoke: MobxPromise_invoke<R>,
@@ -97,10 +97,16 @@ export class MobxPromiseImpl<R> {
     private _latestInvokeId: number = 0;
 
     @observable private internalStatus: 'pending' | 'complete' | 'error' = 'pending';
-    @observable.ref private internalResult?: R = undefined;
+    private internalResult?: R = undefined; // doesnt need to be observable because, since its synchronous,
+    //   users of `result` will synchronously register to `status` and `invoke`
+    //   and thus to anything that could change the output of `result` - `invoke` handles synchronous
+    //   changes, and the only remaining issue is when a promise resolves, which is handled
+    //   by the observable `internalStatus` changing.
+    private synchronousResult = false;
+
     @observable.ref private internalError?: Error = undefined;
 
-    @computed get status(): 'pending' | 'complete' | 'error' {
+    private _statusThatAlwaysTriggers = computed(() => {
         // wait until all MobxPromise dependencies are complete
         if (this.await)
             for (let status of this.await().map(mp => mp.status)) // track all statuses before returning
@@ -108,9 +114,23 @@ export class MobxPromiseImpl<R> {
                     return status;
 
         let status = this.internalStatus; // force mobx to track changes to internalStatus
+
         if (this.latestInvokeId != this.invokeId)
             status = 'pending';
+
+        if (this.synchronousResult)
+            status = 'complete';
+
         return status;
+    }, {equals: (a, b) => false}); // in order to have internalResult not be observable, but still
+    //  keep everything properly triggering recomputation, we need
+    //  a way for our internal code to always react to any recomputation of
+    //  `status`, regardless of whether the result is the same. This accomplishes that.
+
+    @computed get status(): 'pending' | 'complete' | 'error' {
+        // we make this @computed so that outside users of `status` still get the expected @computed behavior
+        //	of only triggering recomputation when the value changes
+        return this._statusThatAlwaysTriggers.get();
     }
 
     @computed get peekStatus(): 'pending' | 'complete' | 'error' {
@@ -123,7 +143,10 @@ export class MobxPromiseImpl<R> {
                     return status;
 
         // otherwise, return internal status
-        return this.internalStatus;
+        let status = this.internalStatus; // force mobx to track changes to internalStatus
+        if (this.synchronousResult)
+            status = 'complete';
+        return status;
     }
 
     @computed get isPending() {
@@ -139,19 +162,22 @@ export class MobxPromiseImpl<R> {
     }
 
     @computed get result(): R | undefined {
-        // checking status may trigger invoke
-        if (this.isError || this.internalResult == null)
+        // checking `_statusThatAlwaysTriggers` may trigger `invoke`, thus registering `result` to its observables
+        if (this._statusThatAlwaysTriggers.get() === "error" || this.internalResult == null)
             return this.defaultResult;
 
         return this.internalResult;
     }
 
     @computed get error(): Error | undefined {
-        // checking status may trigger invoke
-        if (!this.isComplete && this.await)
+        // checking `_statusThatAlwaysTriggers` may trigger `invoke`, thus registering `error` to its observables
+        if (this._statusThatAlwaysTriggers.get() !== "complete" && this.await)
             for (let error of this.await().map(mp => mp.error)) // track all errors before returning
                 if (error)
                     return error;
+
+        if (this.synchronousResult)
+            return undefined; // cant have an error if synchronously complete
 
         return this.internalError;
     }
@@ -163,9 +189,30 @@ export class MobxPromiseImpl<R> {
     @computed
     private get latestInvokeId() {
         window.clearTimeout(this._latestInvokeId);
-        let promise = this.invoke();
-        let invokeId: number = window.setTimeout(() => this.setPending(invokeId, promise));
-        return this._latestInvokeId = invokeId;
+        this.synchronousResult = false;
+
+        let promise = this.invoke((result: R) => {
+            this.synchronousResult = true;
+            this.internalResult = result;
+            return Promise.resolve(result);
+        });
+
+        if (this.synchronousResult) {
+            // synchronous result means we don't have to update anything
+            this.invokeId += 1; // have to change the value in order to trigger recomputation of users of `latestInvokeId`
+
+            if (this.onResult) {
+                const internalResult = this.internalResult;
+                setTimeout(() => {
+                    this.onResult!(internalResult);
+                });
+            }
+            return this.invokeId;
+        } else {
+            // no synchronous result means we need to update everything and react to promise
+            let invokeId: number = window.setTimeout(() => this.setPending(invokeId, promise));
+            return this._latestInvokeId = invokeId;
+        }
     }
 
     @action

@@ -76,7 +76,7 @@ export declare type MobxPromiseInputParams<R> = {
     onError?: (error: Error) => void;
 };
 export declare type MobxPromise_await = () => Array<MobxPromiseUnionTypeWithDefault<any> | MobxPromiseUnionType<any> | MobxPromise<any>>;
-export declare type MobxPromise_invoke<R> = () => PromiseLike<R>;
+export declare type MobxPromise_invoke<R> = (syncResolve: (result: R) => PromiseLike<R>) => PromiseLike<R>;
 export declare type MobxPromiseInputParamsWithDefault<R> = {
     await?: MobxPromise_await;
     invoke: MobxPromise_invoke<R>;
@@ -103,7 +103,9 @@ export declare class MobxPromiseImpl<R> {
     private _latestInvokeId;
     private internalStatus;
     private internalResult?;
+    private synchronousResult;
     private internalError?;
+    private _statusThatAlwaysTriggers;
     readonly status: 'pending' | 'complete' | 'error';
     readonly peekStatus: 'pending' | 'complete' | 'error';
     readonly isPending: boolean;
